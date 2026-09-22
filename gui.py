@@ -20,6 +20,7 @@ import api_client
 import chave
 import config
 import downloads
+import pacing
 import proxies
 import report
 
@@ -53,7 +54,9 @@ class Aplicacao(ctk.CTk):
         self._processando = False
 
         self._construir_widgets()
+        self._atualizar_cota()
         self.after(80, self._processar_fila)
+        self.after(1000, self._agendar_refresh_cota)
 
     # =========================================================================
     # Construção da interface
@@ -103,6 +106,18 @@ class Aplicacao(ctk.CTk):
         self.lbl_sucesso = self._criar_stat(stats, 1, "Sucesso")
         self.lbl_falhas = self._criar_stat(stats, 2, "Falhas")
 
+        # --- Cota gratuita (usada / disponível / próxima janela) ---------
+        cota = ctk.CTkFrame(self, corner_radius=12, fg_color="transparent")
+        cota.grid(row=5, column=0, padx=24, pady=(2, 0), sticky="ew")
+        self.lbl_cota = ctk.CTkLabel(
+            cota,
+            text="Cota — calculando...",
+            anchor="w",
+            font=ctk.CTkFont(size=12),
+            text_color="#e0a63c",
+        )
+        self.lbl_cota.grid(row=0, column=0, sticky="ew")
+
         # --- Nota atual / status ------------------------------------------
         self.lbl_atual = ctk.CTkLabel(
             self,
@@ -110,7 +125,7 @@ class Aplicacao(ctk.CTk):
             anchor="w",
             font=ctk.CTkFont(size=12),
         )
-        self.lbl_atual.grid(row=5, column=0, padx=24, pady=(4, 0), sticky="ew")
+        self.lbl_atual.grid(row=6, column=0, padx=24, pady=(4, 0), sticky="ew")
 
         # --- Resumo ---------------------------------------------------------
         self.texto_resumo = ctk.CTkTextbox(
@@ -269,8 +284,31 @@ class Aplicacao(ctk.CTk):
         pasta = downloads.pasta_downloads()
         interrompido = False
 
+        if config.RITMO_CAUTELOSO:
+            self._fila.put(("aviso", pacing.registrar_contador()))
+
         for idx, acesso in enumerate(chaves, start=1):
-            # Pequena pausa entre chaves para respeitar o limite da API.
+            # ---- Ritmo cauteloso: teto diário + teto por hora ------------
+            if config.RITMO_CAUTELOSO:
+                if pacing.cota_disponivel() <= 0:
+                    interrompido = True
+                    for restante in chaves[idx - 1:]:
+                        self._fila.put(("resultado", {
+                            "chave": restante,
+                            "numero": "",
+                            "status": config.STATUS_FALHA,
+                            "mensagem": "Não processada: cota diária atingida.",
+                        }))
+                    self._fila.put((
+                        "aviso",
+                        "Cota diária atingida. Continue amanhã ou aumente "
+                        "LIMITE_CHAVES_DIA no config.py.",
+                    ))
+                    break
+
+            # Pequena pausa entre chaves para respeitar o limite por minuto
+            # (~60 req/min): passar um pouco da hora é aceitável, estourar
+            # o minuto não.
             if idx > 1:
                 time.sleep(config.DELAY_ENTRE_CHAVES)
 
@@ -289,6 +327,9 @@ class Aplicacao(ctk.CTk):
 
             # ---- Consulta na API (com renovação de proxies se preciso) ---
             resposta = self._consultar_com_renovacao(acesso)
+            if config.RITMO_CAUTELOSO:
+                pacing.somar_consumo(1)
+                pacing.somar_consumo_hora(1)
 
             if resposta["ok"]:
                 numero = resposta["numero"] or chave.numero_nota_da_chave(acesso)
@@ -421,6 +462,8 @@ class Aplicacao(ctk.CTk):
         self._adicionar_resumo("=" * 62)
         self._adicionar_resumo("RESUMO DA EXECUÇÃO")
         self._adicionar_resumo(f"Total de chaves processadas: {c.total}")
+        if config.RITMO_CAUTELOSO:
+            self._adicionar_resumo(pacing.registrar_contador())
         self._adicionar_resumo(f"DANFEs baixadas com sucesso: {c.sucesso}")
         self._adicionar_resumo(f"Total de falhas: {c.falhas}")
 
@@ -449,6 +492,40 @@ class Aplicacao(ctk.CTk):
         self.lbl_processadas.configure(text=str(self._contadores.processadas))
         self.lbl_sucesso.configure(text=str(self._contadores.sucesso))
         self.lbl_falhas.configure(text=str(self._contadores.falhas))
+        self._atualizar_cota()
+
+    @staticmethod
+    def _formatar_tempo(segundos: float) -> str:
+        """Segundos -> 'Xmin Ys' (tempo até a próxima janela)."""
+        total = max(0, int(segundos))
+        if total >= 3600:
+            return f"{total // 3600}h {total % 3600 // 60}min"
+        if total >= 60:
+            return f"{total // 60}min {total % 60}s"
+        return f"{total}s"
+
+    def _atualizar_cota(self) -> None:
+        """Atualiza o painel da cota gratuita: usada / disponível / tempo."""
+        if not config.RITMO_CAUTELOSO:
+            self.lbl_cota.configure(text="Cota desligada (RITMO_CAUTELOSO = False).")
+            return
+        usados = pacing.consumo_hoje()
+        livres = pacing.cota_disponivel()
+        hora = pacing.consumo_hora()
+        limite_hora = config.LIMITE_CHAVES_HORA
+        tempo = self._formatar_tempo(pacing.segundos_ate_proxima_hora())
+        self.lbl_cota.configure(
+            text=(
+                f"Cota gratuita — usados hoje: {usados} | disponíveis hoje: "
+                f"{livres} | hora: {hora}/{limite_hora} | próxima janela: "
+                f"{tempo}"
+            )
+        )
+
+    def _agendar_refresh_cota(self) -> None:
+        """Mantém o painel da cota atualizado a cada segundo."""
+        self._atualizar_cota()
+        self.after(1000, self._agendar_refresh_cota)
 
     def _adicionar_resumo(self, texto: str) -> None:
         """Acrescenta uma linha ao painel de resumo (somente leitura)."""

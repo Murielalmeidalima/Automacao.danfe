@@ -37,6 +37,20 @@ RETRY_429_MAX_ESPERA = 120     # acima disso o 429 é tratado como limite "duro"
 RETRY_429_CAP = 120            # teto (em s) de espera em um 429 retentável
 
 # =============================================================================
+# Ritmo cauteloso (exibição + teto diário)
+# =============================================================================
+#   A cota gratuita é ~400 chaves/dia por IP e, ao estourar o dia, a API
+#   bloqueia com 429 longo (~5h). O único teto rígido a NÃO ultrapassar é o
+#   por minuto (~60/min) — garantido pelo DELAY_ENTRE_CHAVES. O limite por
+#   hora é apenas INFORMATIVO na tela: passar um pouco dele não bloqueia,
+#   desde que não se exceda o teto de 60 req/min. O teto diário para o lote.
+RITMO_CAUTELOSO = True         # mostra cota na tela e força o teto diário
+LIMITE_CHAVES_HORA = 50        # exibição (informa o ritmo de 400 em 8h)
+LIMITE_CHAVES_DIA = 400        # teto diário: para o lote (× nº de IPs/proxies)
+ARQUIVO_CONTADOR_DIA = "contador_diario.txt"   # registra o consumo do dia
+ARQUIVO_CONTADOR_HORA = "contador_hora.txt"    # registra o consumo da hora
+
+# =============================================================================
 # Proxies (rotação de IP)
 # =============================================================================
 #   A cota gratuita é aplicada POR IP. Com vários proxies é possível espalhar

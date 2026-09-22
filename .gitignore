@@ -12,3 +12,5 @@ proxies.txt
 downloads/
 *.xlsx
 *.log
+contador_diario.txt
+contador_hora.txt
