@@ -21,7 +21,6 @@ import chave
 import config
 import downloads
 import pacing
-import proxies
 import report
 
 ctk.set_appearance_mode("system")
@@ -210,38 +209,6 @@ class Aplicacao(ctk.CTk):
         return valor
 
     # =========================================================================
-    # Renovação automática de proxies
-    # =========================================================================
-    def _consultar_com_renovacao(self, acesso: str) -> dict:
-        """Consulta a chave e, se o limite esgotar, renova os proxies grátis.
-
-        Quando todos os proxies atuais atingem o limite (rate limit "duro"),
-        busca novas listas grátis, grava em proxies.txt e tenta a mesma chave
-        de novo — evitando parar o lote por causa do limite diário por IP.
-        """
-        resposta = api_client.consultar_danfe(acesso)
-        if not (config.USAR_PROXIES and config.AUTO_RENOVAR_PROXIES):
-            return resposta
-
-        renovacoes = 0
-        while (
-            resposta.get("codigo") == "rate_limit_longo"
-            and renovacoes < config.MAX_RENOVACOES_POR_CHAVE
-        ):
-            renovacoes += 1
-            self._fila.put(("aviso", "Ajustando conexão, aguarde..."))
-            try:
-                aprovados = proxies.buscar_proxies_gratis()
-            except Exception:  # noqa: BLE001 — busca nunca derruba o lote
-                break
-            if not aprovados:
-                break
-            proxies.salvar_proxies(aprovados)
-            proxies.obter_gerenciador().carregar()
-            resposta = api_client.consultar_danfe(acesso)
-        return resposta
-
-    # =========================================================================
     # Laço de processamento
     # =========================================================================
     def _iniciar_processamento(self) -> None:
@@ -325,8 +292,8 @@ class Aplicacao(ctk.CTk):
                 }))
                 continue
 
-            # ---- Consulta na API (com renovação de proxies se preciso) ---
-            resposta = self._consultar_com_renovacao(acesso)
+            # ---- Consulta na API -------------------------------------------------
+            resposta = api_client.consultar_danfe(acesso)
             if config.RITMO_CAUTELOSO:
                 pacing.somar_consumo(1)
                 pacing.somar_consumo_hora(1)

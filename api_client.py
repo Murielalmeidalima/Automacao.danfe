@@ -5,7 +5,7 @@ Concentra toda a comunicação HTTP com o endpoint /api/v1/consulta:
   2. Traduz códigos de erro (header X-Error-Code + JSON) para mensagens
      legíveis ao usuário;
   3. Aplica nova tentativa com backoff exponencial para falhas transitórias
-     (timeout, rede, 5xx e rate limit).
+     (timeout, rede, 5xx e rate limit curto).
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ import requests
 
 import config
 import logs
-import proxies
 
 
 class ErroAPI(Exception):
@@ -72,25 +71,6 @@ def _retry_after_segundos(resp: requests.Response) -> float | None:
         return None
 
 
-def _pode_trocar_proxy(
-    gerenciador: proxies.GerenciadorProxies,
-    trocas: int,
-    por_rate_limit: bool = False,
-) -> bool:
-    """Indica se ainda vale trocar de proxy (há outra saída e resta orçamento).
-
-    `por_rate_limit=True` só permite a troca quando ROTACIONAR_EM_429 está
-    ligado; erros de conexão do próprio proxy sempre podem rotacionar.
-    """
-    if not config.USAR_PROXIES:
-        return False
-    if por_rate_limit and not config.ROTACIONAR_EM_429:
-        return False
-    if trocas >= config.MAX_TROCA_PROXY_POR_CHAVE:
-        return False
-    return gerenciador.total() > 1
-
-
 def _extrair_nnf(xml_base64: str) -> str:
     """Tenta ler o número da nota (<nNF>) a partir do XML retornado.
 
@@ -122,55 +102,20 @@ def consultar_danfe(chave: str) -> dict:
           {ok: False, chave, numero ("" ou valor), mensagem, codigo} em falha.
     """
     logger = logs.obter_logger()
-    gerenciador = proxies.obter_gerenciador()
-    if config.USAR_PROXIES:
-        gerenciador.garantir_carregado()
-        if config.TESTAR_PROXIES_NO_INICIO and not gerenciador.podado():
-            antes, depois = gerenciador.podar_mortos()
-            gerenciador.marcar_podado()
-            logger.info(
-                "poda de proxies | antes=%d | depois=%d", antes, depois,
-            )
-    trocas_proxy = 0
     ultimo_erro: ErroAPI | None = None
     tentativa = 0
 
     while tentativa < config.MAX_TENTATIVAS:
         tentativa += 1
 
-        # Usa o proxy atual e, em seguida, conta a requisição — assim a
-        # rotação (ROTACIONAR_A_CADA_N) prepara o proxy da PRÓXIMA consulta.
-        proxy_atual = gerenciador.atual() if config.USAR_PROXIES else ""
-        if config.USAR_PROXIES:
-            gerenciador.contar_requisicao()
         opcoes: dict = {
             "json": {"chave": chave, "format": "json"},
             "headers": config.HEADERS,
             "timeout": (config.TIMEOUT_CONEXAO_SEGUNDOS, config.TIMEOUT_SEGUNDOS),
         }
-        if proxy_atual:
-            opcoes["proxies"] = proxies.normalizar(proxy_atual)
 
         try:
             resp = requests.post(config.ENDPOINT_CONSULTA, **opcoes)
-        except requests.exceptions.ProxyError as exc:
-            logger.warning(
-                "falha de proxy | chave=%s | proxy=%s | %s",
-                chave, proxies.mascarar(proxy_atual), exc,
-            )
-            if _pode_trocar_proxy(gerenciador, trocas_proxy):
-                trocas_proxy += 1
-                gerenciador.marcar_falha()
-                gerenciador.proximo()
-                tentativa -= 1  # trocar de proxy não consome tentativa normal
-                continue
-            ultimo_erro = ErroAPI(
-                "Falha de comunicação com a API (proxy).", "falha_comunicacao"
-            )
-            retry = _dependente_de_retry_falha(ultimo_erro.codigo, tentativa)
-            if retry:
-                time.sleep(retry)
-            continue
         except requests.exceptions.Timeout:
             ultimo_erro = ErroAPI(
                 "Tempo de resposta excedido (timeout).", "timeout"
@@ -257,25 +202,12 @@ def consultar_danfe(chave: str) -> dict:
         if resp.status_code == 429:
             espera = _retry_after_segundos(resp)
             logger.warning(
-                "429 rate limit | chave=%s | tentativa=%d | Retry-After=%s | proxy=%s",
+                "429 rate limit | chave=%s | tentativa=%d | Retry-After=%s",
                 chave, tentativa,
                 espera if espera is not None else "ausente",
-                proxies.mascarar(proxy_atual),
             )
-            # Com proxies disponíveis, o limite é do IP: trocar de saída
-            # costuma resolver tanto o 429 curto quanto o "duro".
-            if _pode_trocar_proxy(gerenciador, trocas_proxy, por_rate_limit=True):
-                trocas_proxy += 1
-                gerenciador.marcar_falha()
-                novo = gerenciador.proximo()
-                logger.info(
-                    "trocando proxy por rate limit | chave=%s | novo=%s",
-                    chave, proxies.mascarar(novo),
-                )
-                tentativa -= 1  # trocar de proxy não consome tentativa normal
-                continue
-            # Sem proxies: limite "duro" (cota diária / IP bloqueado) —
-            # esperar não resolve. Devolve de imediato para o lote ser
+            # 429 com espera longa = cota do dia esgotada/IP bloqueado.
+            # Esperar não resolve — devolve de imediato para o lote ser
             # interrompido sem queimar mais requisições.
             if espera is not None and espera > config.RETRY_429_MAX_ESPERA:
                 return {

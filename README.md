@@ -47,94 +47,6 @@ Para não ser barrado, a ferramenta usa um **ritmo cauteloso** (ajustável em
 - O consumo é **persistido** em `contador_diario.txt`/`contador_hora.txt` — o
   teto do dia vale mesmo fechando e abrindo o programa várias vezes.
 
-Com **proxies** a cota se multiplica (um teto por IP) — veja *Rotação de IP*.
-
-> A rotação de proxies roda **de forma anônima/automática** em segundo plano:
-> não há botões nem indicador na tela. Para repor a lista manualmente, use
-> `python proxies.py --buscar --salvar` (ver seção *Rotação de IP*).
-
-## Rotação de IP (proxies)
-
-**Opcional.** O ritmo cauteloso já basta para respeitar os limites de **um** IP
-(sua rede). Como a cota gratuita é aplicada **por IP**, os proxies servem para
-**multiplicar** a capacidade: com N proxies você roda até ~400 × N chaves/dia.
-O recurso vem **desligado** por padrão.
-
-### Como ativar
-
-1. Crie o arquivo **`proxies.txt`** na pasta do projeto (copie de
-   `proxies.exemplo.txt`), com **um proxy por linha**:
-
-   ```
-   http://usuario:senha@host:porta
-   http://usuario:senha@host2:porta
-   host3:porta
-   ```
-
-   > `proxies.txt` contém credenciais e **não deve ser versionado** (já está no
-   > `.gitignore`).
-
-2. Ajuste em `config.py`:
-
-   ```python
-   USAR_PROXIES = True            # liga a rotação
-   ROTACIONAR_EM_429 = True       # troca de proxy ao bater rate limit
-   ROTACIONAR_A_CADA_N = 0        # 0 = só troca em erro; N>0 = a cada N requests
-   ```
-
-3. (Opcional) teste os proxies antes de rodar:
-
-   ```bash
-   python proxies.py --testar
-   ```
-
-### Como funciona
-
-- Ao receber **429 (rate limit)** ou erro de proxy, a ferramenta **troca para o
-  próximo proxy** e tenta a mesma chave de novo — até
-  `MAX_TROCA_PROXY_POR_CHAVE` trocas.
-- Esgotadas as trocas sem sucesso, o comportamento é o mesmo de quando não há
-  proxies: o lote é interrompido e informa o tempo de espera da API.
-- O rótulo **Proxy** na tela mostra o proxy em uso; **Recarregar proxies** lê o
-  arquivo novamente.
-- Credenciais de proxy são **mascaradas** nos logs (`http://***@host:porta`).
-
-### Proxies grátis (automático)
-
-Como o projeto prioriza custo zero, há uma busca automática de proxies grátis:
-ela baixa listas públicas, testa cada candidato em dois estágios
-(conectividade + acesso ao alvo/Cloudflare) e grava **apenas os que funcionam**.
-
-- Na interface: botão **Buscar proxies grátis** (roda em segundo plano e
-  atualiza o `proxies.txt` sozinho).
-- Pela linha de comando:
-
-  ```bash
-  python proxies.py --buscar            # mostra os aprovados
-  python proxies.py --buscar --salvar   # grava os aprovados em proxies.txt
-  ```
-
-> **Aviso:** proxies grátis são **instáveis** (duram de minutos a horas) e, em
-> boa parte, são bloqueados pelo Cloudflare. A busca contorna isso testando
-> contra o alvo, mas espere precisar **rodar a busca de novo com frequência**.
-> Para uso sério/400 consultas por dia, proxies **residenciais pagos** (a partir
-> de ~US$1/GB) são bem mais estáveis.
-
-#### Renovação automática durante o lote
-
-Para não parar no limite diário por IP, quando **todos** os proxies atuais
-atingem o limite, a ferramenta **busca novos proxies grátis sozinha** e
-continua a mesma chave (`AUTO_RENOVAR_PROXIES = True`), até
-`MAX_RENOVACOES_POR_CHAVE` vezes por chave. Só interrompe o lote se, mesmo
-renovando, o limite persistir (ou não houver nenhum proxy funcional).
-
-> **Escolha dos proxies:** a API está atrás de Cloudflare, então proxies de
-> **datacenter e listas grátis costumam ser bloqueados**. Use proxies
-> **residenciais/móveis** para ter IPs aceitos.
->
-> Atenção: contornar o limite por IP com rotação contraria os Termos de Uso do
-> serviço — o risco (bloqueio/banimento) é de quem usa.
-
 ## Instalação (para desenvolvedor)
 
 Requer Python 3.10+ com `venv`.
@@ -180,7 +92,7 @@ nuvem do GitHub (que já tem Python):
 
 1. Crie/use um repositório no GitHub e suba a pasta `danfe_downloader`
    (o arquivo de pipeline já está em `.github/workflows/gerar-exe.yml`).
-2. Na aba **Actions** do repositório, abra **"Gerar BaixadorDANFE.exe"** e
+2. Na aba **Actions** do repositório, abra **"Atualizado Baixador de NFS"** e
    clique em **"Run workflow"**.
 3. Aguarde o build (~2–4 min), abra o job e baixe o artefato
    **BaixadorDANFE** — dentro dele está o `BaixadorDANFE.exe`.

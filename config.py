@@ -19,7 +19,7 @@ HEADERS = {
 # Requisições HTTP
 # =============================================================================
 TIMEOUT_SEGUNDOS = 30          # tempo máximo para cada chamada à API
-TIMEOUT_CONEXAO_SEGUNDOS = 10  # tempo de conexão; proxy morto falha rápido
+TIMEOUT_CONEXAO_SEGUNDOS = 10  # tempo de conexão; cai rápido se a rede falhar
 DELAY_ENTRE_CHAVES = 1.2       # intervalo entre chaves (respeita 60 req/min)
 
 # =============================================================================
@@ -46,43 +46,9 @@ RETRY_429_CAP = 120            # teto (em s) de espera em um 429 retentável
 #   desde que não se exceda o teto de 60 req/min. O teto diário para o lote.
 RITMO_CAUTELOSO = True         # mostra cota na tela e força o teto diário
 LIMITE_CHAVES_HORA = 50        # exibição (informa o ritmo de 400 em 8h)
-LIMITE_CHAVES_DIA = 400        # teto diário: para o lote (× nº de IPs/proxies)
+LIMITE_CHAVES_DIA = 400        # teto diário: para o lote
 ARQUIVO_CONTADOR_DIA = "contador_diario.txt"   # registra o consumo do dia
 ARQUIVO_CONTADOR_HORA = "contador_hora.txt"    # registra o consumo da hora
-
-# =============================================================================
-# Proxies (rotação de IP)
-# =============================================================================
-#   A cota gratuita é aplicada POR IP. Com vários proxies é possível espalhar
-#   as consultas entre IPs diferentes. Use proxies residenciais/móveis: a API
-#   está atrás de Cloudflare e proxies de datacenter costumam ser bloqueados.
-USAR_PROXIES = False           # desligado: consultas direto na API (sem proxy)
-ARQUIVO_PROXIES = "proxies.txt"  # um proxy por linha (NÃO versionar este arquivo)
-ROTACIONAR_EM_429 = True       # ao bater rate limit, troca de proxy e tenta de novo
-ROTACIONAR_A_CADA_N = 1        # 0 = só troca em erro; 1 = troca a cada consulta
-MAX_TROCA_PROXY_POR_CHAVE = 3  # máximo de trocas de proxy tentando a MESMA chave
-TESTAR_PROXIES_NO_INICIO = True
-TIMEOUT_TESTE_PROXY = 8        # segundos para o teste de conexão de cada proxy
-URL_TESTE_PROXY = "https://api.ipify.org?format=json"  # retorna o IP de saída
-
-# Fontes públicas de listas de proxies grátis (formato "ip:porta" por linha).
-# São em sua maioria datacenter — boa parte será bloqueada pelo Cloudflare.
-FONTES_PROXIES_GRATIS = [
-    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
-    "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
-    "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000",
-]
-MAX_TESTE_CONCORRENTE = 60     # testes de proxy em paralelo (busca de grátis)
-MAX_CANDIDATOS_BUSCA = 400     # limita quantos candidatos grátis testar
-TIMEOUT_TESTE_BUSCA = 6        # timeout (s) dos testes na busca de grátis
-ARQUIVO_PROXIES_FONTE = "proxies.txt"  # onde a busca grava os proxies aprovados
-
-# Renovação automática: ao esgotar os proxies atuais (rate limit em todos),
-# busca novos proxies grátis e continua, sem parar o lote.
-AUTO_RENOVAR_PROXIES = True    # liga a renovação automática durante o lote
-MAX_RENOVACOES_POR_CHAVE = 2   # quantas vezes renovar tentando a MESMA chave
 
 # =============================================================================
 # Arquivos / pastas
