@@ -18,15 +18,36 @@ com o resultado de cada chave também é salvo na Downloads.
 3. Cada chave é validada (44 dígitos + dígito verificador) e consultada na API.
 4. O PDF é baixado e renomeado com o número da nota.
 5. Barra de progresso + contadores em tempo real (processadas / sucesso / falhas).
-6. Resumo final na própria tela + relatório `relatorio_danfes_<data>.xlsx`.
+6. Painel de **cota gratuita** em tempo real (usadas hoje / disponíveis hoje / hora / próxima janela).
+7. Resumo final na própria tela + relatório `relatorio_danfes_<data>.xlsx`.
 
 ## Recursos da interface
 
 - **Processar DANFEs** — executa a consulta das chaves.
+- **Painel de cota** — mostra o consumo do dia (usadas/disponíveis), o consumo da hora atual e o tempo até a próxima janela de 60 min.
 - **Copiar Chaves com Erro** — copia apenas as chaves que falharam (para nova tentativa).
 - **Abrir Downloads** — abre a pasta de Downloads.
 - **Nova Consulta** — limpa a tela para uma nova execução.
 - **Fechar** — encerra o programa.
+
+## Limites da API e ritmo cauteloso
+
+O plano gratuito da API tem **~60 requisições/minuto** e **~400 chaves/dia por IP**.
+Para não ser barrado, a ferramenta usa um **ritmo cauteloso** (ajustável em
+`config.py`):
+
+- Delay de **1,2s entre chaves** — nunca passa de 60 req/min (o único teto que
+  não pode ser ultrapassado).
+- **Teto diário** (`LIMITE_CHAVES_DIA`, padrão 400): ao atingir, o lote para e
+  avisa — evitando o bloqueio de ~5h que a API aplica quando a cota do dia é
+  estourada.
+- **Teto por hora** (`LIMITE_CHAVES_HORA`, padrão 50) é **apenas informativo**
+  na tela: passar um pouco da hora é aceitável, desde que o por minuto não seja
+  excedido.
+- O consumo é **persistido** em `contador_diario.txt`/`contador_hora.txt` — o
+  teto do dia vale mesmo fechando e abrindo o programa várias vezes.
+
+Com **proxies** a cota se multiplica (um teto por IP) — veja *Rotação de IP*.
 
 > A rotação de proxies roda **de forma anônima/automática** em segundo plano:
 > não há botões nem indicador na tela. Para repor a lista manualmente, use
@@ -34,9 +55,10 @@ com o resultado de cada chave também é salvo na Downloads.
 
 ## Rotação de IP (proxies)
 
-Como a cota gratuita é aplicada **por IP**, é possível espalhar as consultas
-entre vários endereços de saída usando proxies. O recurso vem **desligado** por
-padrão.
+**Opcional.** O ritmo cauteloso já basta para respeitar os limites de **um** IP
+(sua rede). Como a cota gratuita é aplicada **por IP**, os proxies servem para
+**multiplicar** a capacidade: com N proxies você roda até ~400 × N chaves/dia.
+O recurso vem **desligado** por padrão.
 
 ### Como ativar
 
@@ -177,7 +199,7 @@ nuvem do GitHub (que já tem Python):
 | Endpoint | `POST https://consultadanfe.com/api/v1/consulta` |
 | Corpo | `{"chave": "<44 digitos>"}` |
 | Resposta | `{status, chave, tipo, pdf_base64, xml_base64}` |
-| Limite | ~60 requisições/minuto por IP (a ferramenta aguarda ~1,2s entre chaves) |
+| Limite | ~60 req/min · ~400 chaves/dia por IP (a ferramenta usa ritmo cauteloso e mostra a cota na tela) |
 | Erros | `{error, message}` + header `X-Error-Code` / `Retry-After` |
 
 > **Atenção ao plano gratuito:** o limite é aplicado **por IP** e é
