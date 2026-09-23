@@ -56,7 +56,7 @@ ARQUIVO_CONTADOR_HORA = "contador_hora.txt"    # registra o consumo da hora
 #   A cota gratuita é aplicada POR IP. Com vários proxies é possível espalhar
 #   as consultas entre IPs diferentes. Use proxies residenciais/móveis: a API
 #   está atrás de Cloudflare e proxies de datacenter costumam ser bloqueados.
-USAR_PROXIES = True            # liga/desliga o uso de proxies
+USAR_PROXIES = False           # desligado: consultas direto na API (sem proxy)
 ARQUIVO_PROXIES = "proxies.txt"  # um proxy por linha (NÃO versionar este arquivo)
 ROTACIONAR_EM_429 = True       # ao bater rate limit, troca de proxy e tenta de novo
 ROTACIONAR_A_CADA_N = 1        # 0 = só troca em erro; 1 = troca a cada consulta
