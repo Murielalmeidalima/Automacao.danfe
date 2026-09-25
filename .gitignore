@@ -13,3 +13,4 @@ downloads/
 *.log
 contador_diario.txt
 contador_hora.txt
+vpn_cache.txt

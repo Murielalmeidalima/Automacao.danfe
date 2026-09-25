@@ -11,6 +11,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +21,7 @@ import api_client
 import chave
 import config
 import downloads
+import logs
 import pacing
 import report
 
@@ -227,6 +229,21 @@ class Aplicacao(ctk.CTk):
             self._adicionar_resumo("Nenhuma chave de acesso informada.")
             return
 
+        if config.RITMO_CAUTELOSO:
+            restante = pacing.cota_disponivel()
+            if restante <= 0:
+                self._adicionar_resumo(
+                    "AVISO: cota estimada do dia atingida (nada será processado). "
+                    "Aguarde a próxima janela ou aumente LIMITE_CHAVES_DIA."
+                )
+                self._atualizar_cota()
+            elif restante < len(chaves):
+                self._adicionar_resumo(
+                    f"AVISO: cota estimada restante ({restante}) é menor que o "
+                    f"lote ({len(chaves)}). A API pode recusar parte das chaves "
+                    f"(HTTP 429) e o lote será interrompido."
+                )
+
         self._contadores = Contadores(total=len(chaves))
         self._processando = True
         self._alternar_estado_widgets(habilitado=False)
@@ -245,6 +262,11 @@ class Aplicacao(ctk.CTk):
         try:
             self._worker_principal(chaves)
         except Exception as exc:  # noqa: BLE001 — nunca deixar a UI travada
+            logs.registrar_erro(
+                "Erro inesperado no robô (thread worker)",
+                f"Exceção: {type(exc).__name__}: {exc}",
+                trace=traceback.format_exc(),
+            )
             self._fila.put(("finalizar", f"Erro inesperado: {exc}"))
 
     def _worker_principal(self, chaves: list[str]) -> None:
@@ -305,6 +327,10 @@ class Aplicacao(ctk.CTk):
                         resposta["pdf_bytes"], numero, pasta
                     )
                 except OSError as exc:
+                    logs.registrar_erro(
+                        "Erro ao gravar PDF no disco",
+                        f"Chave: {acesso} | Número: {numero}\n{exc}",
+                    )
                     self._fila.put(("resultado", {
                         "chave": acesso,
                         "numero": numero,
@@ -313,6 +339,10 @@ class Aplicacao(ctk.CTk):
                     }))
                     continue
                 except ValueError as exc:
+                    logs.registrar_erro(
+                        "Erro no PDF baixado",
+                        f"Chave: {acesso} | Número: {numero}\n{exc}",
+                    )
                     self._fila.put(("resultado", {
                         "chave": acesso,
                         "numero": numero,
@@ -357,6 +387,10 @@ class Aplicacao(ctk.CTk):
             )
             mensagem_relatorio = f"Relatório gerado: {caminho_relatorio.name}"
         except OSError as exc:
+            logs.registrar_erro(
+                "Erro ao gerar relatório Excel",
+                f"Pasta: {pasta}\n{exc}",
+            )
             mensagem_relatorio = f"Falha ao gerar o relatório Excel: {exc}"
 
         if interrompido:
@@ -477,17 +511,24 @@ class Aplicacao(ctk.CTk):
             self.lbl_cota.configure(text="Cota desligada (RITMO_CAUTELOSO = False).")
             return
         usados = pacing.consumo_hoje()
+        limite = config.LIMITE_CHAVES_DIA
         livres = pacing.cota_disponivel()
         hora = pacing.consumo_hora()
         limite_hora = config.LIMITE_CHAVES_HORA
         tempo = self._formatar_tempo(pacing.segundos_ate_proxima_hora())
-        self.lbl_cota.configure(
-            text=(
-                f"Cota gratuita — usados hoje: {usados} | disponíveis hoje: "
-                f"{livres} | hora: {hora}/{limite_hora} | próxima janela: "
-                f"{tempo}"
-            )
+        texto = (
+            f"Cota gratuita — usados hoje: {usados}/{limite} "
+            f"(restam {livres}) | hora: {hora}/{limite_hora} | "
+            f"próxima janela: {tempo}"
         )
+        cor = "#e0a63c"
+        if livres <= 0:
+            texto += " | LIMITE DIÁRIO ATINGIDO — retorne amanhã."
+            cor = "#d95945"
+        elif limite and usados * 100 >= limite * config.ALERTA_COTA_PORCENTO:
+            texto += " | ATENÇÃO: perto do limite diário."
+            cor = "#d95945"
+        self.lbl_cota.configure(text=texto, text_color=cor)
 
     def _agendar_refresh_cota(self) -> None:
         """Mantém o painel da cota atualizado a cada segundo."""

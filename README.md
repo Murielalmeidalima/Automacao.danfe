@@ -47,6 +47,27 @@ Para não ser barrado, a ferramenta usa um **ritmo cauteloso** (ajustável em
 - O consumo é **persistido** em `contador_diario.txt`/`contador_hora.txt` — o
   teto do dia vale mesmo fechando e abrindo o programa várias vezes.
 
+## VPN grátis (rotação de IP de saída)
+
+Como o limite da API é por IP, a ferramenta traz uma **VPN leve integrada**
+(`vpn.py`): ela baixa IPs grátis de listas públicas, testa quais respondem e
+**rotaciona o IP de saída** a cada consulta — espalhando as ~400 chaves/dia
+entre vários IPs. Quando a API responde `429`, ela troca o IP na hora em vez de
+encerrar o lote.
+
+- **Tudo automático** (sem controles na tela): ligue/desligue só pelo
+  `USAR_VPN` no `config.py` (padrão ligado). A busca de IPs roda sozinha,
+  em segundo plano, e a rotação acontece a cada consulta sem intervenção.
+- IPs de datacenter são, em boa parte, **bloqueados pelo Cloudflare** da API —
+  quando nenhum responde, as consultas **caem automaticamente para o IP
+  direto** da máquina (a ferramenta não quebra).
+- Os IPs encontrados são salvos em `vpn_cache.txt` (não versionado) para reuso.
+- Linha de comando (opcional, para diagnóstico): `python vpn.py --buscar` e
+  `python vpn.py --testar`.
+- **Atenção:** os dados das notas trafegam por servidores de terceiros ao usar
+  a VPN. Use apenas se aceitar isso — para dados sensíveis, prefira consultas
+  diretas respeitando a cota.
+
 ## Instalação (para desenvolvedor)
 
 Requer Python 3.10+ com `venv`.

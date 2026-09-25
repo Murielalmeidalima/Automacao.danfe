@@ -4,8 +4,11 @@ Concentra toda a comunicação HTTP com o endpoint /api/v1/consulta:
   1. Valida o contrato da resposta;
   2. Traduz códigos de erro (header X-Error-Code + JSON) para mensagens
      legíveis ao usuário;
-  3. Aplica nova tentativa com backoff exponencial para falhas transitórias
-     (timeout, rede, 5xx e rate limit curto).
+3. Aplica nova tentativa com backoff exponencial para falhas transitórias
+      (timeout, rede, 5xx e rate limit curto);
+   4. Com a VPN leve ligada (config.USAR_VPN), rotaciona o IP de saída a
+      cada consulta e troca de IP diante de 429/falhas, com fallback para
+      o IP direto quando o pool de IPs grátis está vazio.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import requests
 
 import config
 import logs
+import vpn
 
 
 class ErroAPI(Exception):
@@ -71,6 +75,25 @@ def _retry_after_segundos(resp: requests.Response) -> float | None:
         return None
 
 
+def _pode_trocar_ip(
+    gerenciador: vpn.GerenciadorVpn,
+    trocas: int,
+    por_rate_limit: bool = False,
+) -> bool:
+    """Indica se ainda vale trocar o IP de saída (há outra saída e orçamento).
+
+    `por_rate_limit=True` só permite a troca quando ROTACIONAR_EM_429 está
+    ligado; erros de conexão do próprio IP sempre podem rotacionar.
+    """
+    if not config.USAR_VPN:
+        return False
+    if por_rate_limit and not config.ROTACIONAR_EM_429:
+        return False
+    if trocas >= config.MAX_TROCA_VPN_POR_CHAVE:
+        return False
+    return gerenciador.total() > 1
+
+
 def _extrair_nnf(xml_base64: str) -> str:
     """Tenta ler o número da nota (<nNF>) a partir do XML retornado.
 
@@ -93,6 +116,10 @@ def _extrair_nnf(xml_base64: str) -> str:
 def consultar_danfe(chave: str) -> dict:
     """Consulta o DANFE de uma chave na API, com retries por falha transitória.
 
+    Toda falha (rate limit, timeout, rede, resposta inválida, PDF
+    corrompido, fim das tentativas) também é gravada em
+    `Downloads/erros_danfe.txt` para diagnóstico.
+
     Args:
         chave: chave de acesso de 44 caracteres (já validada pelo chamador).
 
@@ -101,21 +128,81 @@ def consultar_danfe(chave: str) -> dict:
           {ok: True,  chave, numero, pdf_bytes, tipo}                em sucesso;
           {ok: False, chave, numero ("" ou valor), mensagem, codigo} em falha.
     """
+    resposta = _consultar_danfe_impl(chave)
+    if not resposta["ok"]:
+        logs.registrar_erro(
+            "Falha na requisição a API",
+            _detalhes_erro(chave, resposta),
+        )
+    return resposta
+
+
+def _detalhes_erro(chave: str, resposta: dict) -> str:
+    """Monta o texto multilinha gravado no arquivo de erros."""
+    linhas = [
+        f"Chave: {chave}",
+        f"Código: {resposta.get('codigo') or '(sem código)'}",
+        f"Mensagem: {resposta.get('mensagem') or ''}",
+    ]
+    retry_after = resposta.get("retry_after")
+    if retry_after is not None:
+        linhas.append(
+            f"Retry-After: {retry_after:.0f}s "
+            f"({_formatar_espera(retry_after)}) "
+            f"[429 = limite de requisições da API]"
+        )
+    linhas.append(f"HTTP status: {resposta.get('http_status', '')}")
+    linhas.append(f"X-Error-Code: {resposta.get('x_error_code', '')}")
+    return "\n".join(linhas)
+
+
+def _consultar_danfe_impl(chave: str) -> dict:
     logger = logs.obter_logger()
+    gerenciador = vpn.obter_gerenciador()
+    trocas_ip = 0
     ultimo_erro: ErroAPI | None = None
     tentativa = 0
+
+    if config.USAR_VPN:
+        gerenciador.garantir_carregado()
 
     while tentativa < config.MAX_TENTATIVAS:
         tentativa += 1
 
+        # Saída: VPN leve (IP rotativo) ou direto quando o pool está vazio.
         opcoes: dict = {
             "json": {"chave": chave, "format": "json"},
             "headers": config.HEADERS,
             "timeout": (config.TIMEOUT_CONEXAO_SEGUNDOS, config.TIMEOUT_SEGUNDOS),
         }
+        proxy_atual = ""
+        if config.USAR_VPN:
+            proxies_dict = gerenciador.preparar_requisicao()
+            if proxies_dict:
+                opcoes["proxies"] = proxies_dict
+                proxy_atual = list(proxies_dict.values())[0]
 
         try:
             resp = requests.post(config.ENDPOINT_CONSULTA, **opcoes)
+        except requests.exceptions.ProxyError as exc:
+            logger.warning(
+                "falha de IP de saída | chave=%s | ip=%s | %s",
+                chave, vpn.mascarar(proxy_atual), exc,
+            )
+            gerenciador.marcar_falha()
+            if _pode_trocar_ip(gerenciador, trocas_ip):
+                trocas_ip += 1
+                gerenciador.proximo()
+                tentativa -= 1  # trocar de IP não consome tentativa normal
+                continue
+            ultimo_erro = ErroAPI(
+                "Falha de comunicação com a API (IP de saída).",
+                "falha_comunicacao",
+            )
+            retry = _dependente_de_retry_falha(ultimo_erro.codigo, tentativa)
+            if retry:
+                time.sleep(retry)
+            continue
         except requests.exceptions.Timeout:
             ultimo_erro = ErroAPI(
                 "Tempo de resposta excedido (timeout).", "timeout"
@@ -157,6 +244,8 @@ def consultar_danfe(chave: str) -> dict:
                     "numero": "",
                     "mensagem": "Resposta inválida (formato inesperado).",
                     "codigo": "resposta_invalida",
+                    "http_status": resp.status_code,
+                    "x_error_code": "",
                 }
 
             if dados.get("status") == "ok" and dados.get("pdf_base64"):
@@ -169,6 +258,8 @@ def consultar_danfe(chave: str) -> dict:
                         "numero": "",
                         "mensagem": "Falha no download: PDF retornado em formato incorreto.",
                         "codigo": "pdf_base64_invalido",
+                        "http_status": resp.status_code,
+                        "x_error_code": "",
                     }
                 if not pdf_bytes.startswith(config.MAGIC_PDF):
                     return {
@@ -177,6 +268,8 @@ def consultar_danfe(chave: str) -> dict:
                         "numero": "",
                         "mensagem": "Falha no download: PDF retornado vazio ou corrompido.",
                         "codigo": "pdf_corrompido",
+                        "http_status": resp.status_code,
+                        "x_error_code": "",
                     }
                 numero = _extrair_nnf(dados.get("xml_base64") or "") or chave[25:34]
                 logger.info("200 OK | chave=%s | tentativa=%d", chave, tentativa)
@@ -195,6 +288,8 @@ def consultar_danfe(chave: str) -> dict:
                 "numero": "",
                 "mensagem": erro.mensagem,
                 "codigo": erro.codigo,
+                "http_status": resp.status_code,
+                "x_error_code": resp.headers.get("X-Error-Code", ""),
             }
 
         # ---- erro HTTP (4xx/5xx) -----------------------------------------
@@ -202,13 +297,26 @@ def consultar_danfe(chave: str) -> dict:
         if resp.status_code == 429:
             espera = _retry_after_segundos(resp)
             logger.warning(
-                "429 rate limit | chave=%s | tentativa=%d | Retry-After=%s",
+                "429 rate limit | chave=%s | tentativa=%d | Retry-After=%s | ip=%s",
                 chave, tentativa,
                 espera if espera is not None else "ausente",
+                vpn.mascarar(proxy_atual),
             )
-            # 429 com espera longa = cota do dia esgotada/IP bloqueado.
-            # Esperar não resolve — devolve de imediato para o lote ser
-            # interrompido sem queimar mais requisições.
+            # O limite é por IP: com VPN ligada, trocar a saída costuma
+            # resolver tanto o 429 curto quanto o "duro" (cota do dia).
+            if _pode_trocar_ip(gerenciador, trocas_ip, por_rate_limit=True):
+                trocas_ip += 1
+                gerenciador.marcar_falha()
+                novo = gerenciador.proximo()
+                logger.info(
+                    "trocando IP por rate limit | chave=%s | novo=%s",
+                    chave, vpn.mascarar(novo),
+                )
+                tentativa -= 1  # trocar de IP não consome tentativa normal
+                continue
+            # Sem VPN / pool vazio: 429 com espera longa = cota do dia/IP
+            # bloqueado. Esperar não resolve — devolve de imediato para o
+            # lote ser interrompido sem queimar mais requisições.
             if espera is not None and espera > config.RETRY_429_MAX_ESPERA:
                 return {
                     "ok": False,
@@ -221,6 +329,8 @@ def consultar_danfe(chave: str) -> dict:
                     ),
                     "codigo": "rate_limit_longo",
                     "retry_after": espera,
+                    "http_status": resp.status_code,
+                    "x_error_code": resp.headers.get("X-Error-Code", ""),
                 }
             # 429 curto (janela por minuto): aguarda e tenta de novo.
             if tentativa < config.MAX_TENTATIVAS:

@@ -47,8 +47,41 @@ RETRY_429_CAP = 120            # teto (em s) de espera em um 429 retentável
 RITMO_CAUTELOSO = True         # mostra cota na tela e força o teto diário
 LIMITE_CHAVES_HORA = 50        # exibição (informa o ritmo de 400 em 8h)
 LIMITE_CHAVES_DIA = 400        # teto diário: para o lote
+ALERTA_COTA_PORCENTO = 80      # % do teto diário a partir do qual o painel avisa
 ARQUIVO_CONTADOR_DIA = "contador_diario.txt"   # registra o consumo do dia
 ARQUIVO_CONTADOR_HORA = "contador_hora.txt"    # registra o consumo da hora
+
+# =============================================================================
+# VPN grátis (rotação de IP de saída)
+# =============================================================================
+#   A cota gratuita da API é aplicada POR IP. Esta "VPN leve" troca o IP de
+#   saída entre os proxies grátis descobertos nas listas públicas a cada N
+#   consultas, espalhando as ~400 chaves/dia entre vários IPs — e, ao bater
+#   num 429 (rate limit), troca o IP em vez de encerrar o lote.
+#
+#   IMPORTANTE: são IPs de datacenter, boa parte bloqueada pelo Cloudflare
+#   da API. O ganho é "tentativa": quando nenhum IP grátis responde, as
+#   consultas caem automaticamente para o IP direto (fallback). Os dados
+#   das notas trafegam por servidores de terceiros — use por sua conta.
+USAR_VPN = True               # liga/desliga a VPN leve (rotação de IP)
+ROTACIONAR_A_CADA_N = 1       # troca o IP de saída a cada N consultas
+ROTACIONAR_EM_429 = True      # ao receber 429 (rate limit), troca de IP
+MAX_TROCA_VPN_POR_CHAVE = 3   # máx. de trocas de IP tentando a MESMA chave
+ARQUIVO_VPN = "vpn_cache.txt"  # cache dos IPs encontrados (não versionar)
+CACHE_VPN_MINIMO = 2          # com menos que isso, recarrega as listas
+TEMPO_VALIDADE_VPN = 10 * 60  # segundos; após isso a carga é renovada
+
+# Descoberta de IPs grátis (listas públicas "ip:porta")
+FONTES_VPN_GRATIS = [
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+    "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+]
+MAX_CANDIDATOS_BUSCA = 120    # quantos candidatos testar por carga
+MAX_TESTE_CONCORRENTE = 24    # testes paralelos (sem estourar a rede)
+TIMEOUT_TESTE_PROXY = 6       # segundos por teste de conectividade
+URL_TESTE_PROXY = "https://api.ipify.org?format=json"  # devolve o IP de saída
 
 # =============================================================================
 # Arquivos / pastas
