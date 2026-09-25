@@ -120,7 +120,7 @@ nuvem do GitHub (que já tem Python):
 
 ### Como rodar o .exe
 
-1. Salve `BaixadorDANFE.exe` em qualquer pasta do PC da empresa.
+1. Salve `BaixadorDANFE.exe` em qualquer pasta do PC.
 2. Duplo clique para abrir.
 3. Se o Windows SmartScreen avisar "Protegido/Desconhecido" (arquivo sem
    assinatura digital), clique em **Mais informações → Executar mesmo assim**.
